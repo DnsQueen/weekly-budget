@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>weekly-budget — بودجه هفتگی</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1 data-i18n="heading">بودجه هفتگی</h1>
+      <nav aria-label="language">
+        <a href="?locale=fa">فارسی</a> | <a href="?locale=en">English</a>
+      </nav>
+    </header>
+
+    <p id="error" role="alert" hidden></p>
+
+    <section aria-labelledby="add-heading">
+      <h2 id="add-heading" data-i18n="addSpending">ثبت خرج</h2>
+      <form id="spending-form">
+        <label><span data-i18n="amount">مبلغ</span>
+          <input type="number" name="amount" min="0" step="any" required>
+        </label>
+        <label><span data-i18n="category">دسته</span>
+          <input type="text" name="category" list="categories" required>
+          <datalist id="categories"></datalist>
+        </label>
+        <label><span data-i18n="week">هفته</span>
+          <input type="text" name="week" id="week" pattern="\d{4}-W\d{2}" required>
+        </label>
+        <button type="submit" data-i18n="add">ثبت</button>
+      </form>
+    </section>
+
+    <section aria-labelledby="budget-heading">
+      <h2 id="budget-heading" data-i18n="budget">بودجه هفته</h2>
+      <form id="budget-form">
+        <label><span data-i18n="budget">بودجه هفته</span>
+          <input type="number" name="amount" min="0" step="any" required>
+        </label>
+        <button type="submit" data-i18n="saveBudget">ذخیره بودجه</button>
+      </form>
+    </section>
+
+    <section aria-labelledby="summary-heading">
+      <h2 id="summary-heading" data-i18n="summary">خلاصه هفته</h2>
+      <dl id="summary">
+        <div><dt data-i18n="total">مجموع</dt><dd id="summary-total">—</dd></div>
+        <div><dt data-i18n="remaining">باقی‌مانده</dt><dd id="summary-remaining">—</dd></div>
+        <div><dt data-i18n="warned">هشدار</dt><dd id="summary-warned">—</dd></div>
+        <div><dt data-i18n="percent">درصد</dt><dd id="summary-percent">—</dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="spending-heading">
+      <h2 id="spending-heading" data-i18n="spending">خرج‌های این هفته</h2>
+      <ul id="spending-list"></ul>
+      <p id="no-spending" data-i18n="noSpending">هنوز خرجی ثبت نشده است.</p>
+    </section>
+
+    <section aria-labelledby="history-heading">
+      <h2 id="history-heading" data-i18n="history">تاریخچه هفته‌ها</h2>
+      <table id="history-table">
+        <thead><tr><th data-i18n="week">هفته</th><th data-i18n="total">مجموع</th><th data-i18n="budget">بودجه هفته</th></tr></thead>
+        <tbody id="history-body"></tbody>
+      </table>
+      <p id="no-history" data-i18n="noHistory">هنوز هفته‌ای ثبت نشده است.</p>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
