@@ -1,0 +1,38 @@
+# Draft for Fly.io deploy — NOT deployed yet. Review before running `fly launch`.
+# App name must be globally unique on Fly.io; change it if `fly launch` says it is taken.
+app = "weekly-budget-niloufar"
+primary_region = "arn"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # SQLite lives on the persistent volume so data survives restarts/redeploys.
+  DB_PATH = "/data/weekly-budget.db"
+
+[[mounts]]
+  source = "wb_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  # Single-user app: sleep when idle (billed per second while running only),
+  # wake on the next request. First request after sleep takes a few seconds.
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  # /readyz checks the database; /livez only checks the process. The
+  # Fly check uses readiness so an instance with a dead database is
+  # pulled from rotation instead of serving errors.
+  [[services.http_checks]]
+    path = "/readyz"

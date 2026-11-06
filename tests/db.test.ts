@@ -73,6 +73,21 @@ describe("db", () => {
     db.close();
   });
 
+  it("rejects a non-finite amount", () => {
+    const db = openDb(":memory:");
+    assert.throws(
+      () => addSpending(db, { amount: Number.POSITIVE_INFINITY, category: "food", week: "2026-W45" }),
+      /amount must be greater than 0/,
+    );
+    db.close();
+  });
+
+  it("rejects a non-finite budget", () => {
+    const db = openDb(":memory:");
+    assert.throws(() => setBudget(db, "2026-W45", Number.POSITIVE_INFINITY), /budget must be greater than 0/);
+    db.close();
+  });
+
   it("enforces amount > 0 at the database level", () => {
     const db = openDb(":memory:");
     assert.throws(

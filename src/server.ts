@@ -2,10 +2,10 @@
 // One envelope: success is {data}, errors are {error: {code, message}}.
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync } from "node:fs";
-import { openDb, addSpending, listSpending, setBudget, listWeeks, type Db } from "./db.js";
+import { openDb, addSpending, listSpending, setBudget, listWeeks, ValidationError, type Db } from "./db.js";
 import { weeklySummary } from "./summary.js";
 import { isoWeek, isValidWeek } from "./week.js";
 
@@ -16,9 +16,31 @@ const CONTENT_TYPES: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
 };
 
+// Sent on every response, API and static alike. The app serves only its
+// own assets and has no inline scripts, so `default-src 'self'` holds.
+const SECURITY_HEADERS: Record<string, string> = {
+  "content-security-policy": "default-src 'self'",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+};
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...SECURITY_HEADERS });
   res.end(JSON.stringify(body));
+}
+
+// True only when `candidate` is the directory itself or inside it. A bare
+// prefix match is not enough: "/app/public-evil/x" starts with
+// "/app/public" yet is outside it.
+export function isPathWithinDir(dir: string, candidate: string): boolean {
+  return candidate === dir || candidate.startsWith(dir + sep);
+}
+
+// Create the database file's parent directory (not a hardcoded "data":
+// DB_PATH may point at a volume, e.g. /data/weekly-budget.db on Fly.io).
+export function ensureDbDir(dbPath: string): void {
+  mkdirSync(dirname(dbPath), { recursive: true });
 }
 
 function sendError(res: ServerResponse, status: number, code: string, message: string): void {
@@ -26,10 +48,13 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
 }
 
 // Maps a readJson failure to its response: an oversized body is 413,
-// anything else that is not JSON is 400.
-function sendReadError(res: ServerResponse, error: unknown): void {
+// anything else that is not JSON is 400. After a 413 the socket is
+// destroyed once the response has flushed, so a client cannot hold the
+// connection open by trickling a large body.
+function sendReadError(req: IncomingMessage, res: ServerResponse, error: unknown): void {
   if ((error as Error).message === "BODY_TOO_LARGE") {
     sendError(res, 413, "BODY_TOO_LARGE", "request body exceeds 1 MB");
+    res.once("finish", () => req.socket.destroy());
   } else {
     sendError(res, 400, "BAD_JSON", "request body is not valid JSON");
   }
@@ -78,17 +103,40 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
       const url = new URL(req.url ?? "/", "http://localhost");
       const path = url.pathname;
 
+      // Health probes come before the static handler: /livez and
+      // /readyz do not start with /api/, so the static branch would
+      // swallow them as file requests.
+      if (req.method === "GET" && path === "/livez") {
+        // Liveness: the process itself. Never touches the database.
+        sendJson(res, 200, { data: { status: "alive" } });
+        return;
+      }
+      if (req.method === "GET" && path === "/readyz") {
+        // Readiness: the database must answer a cheap query.
+        try {
+          db.prepare("SELECT 1").get();
+          sendJson(res, 200, { data: { status: "ready", checks: { db: true } } });
+        } catch (error) {
+          console.error(error);
+          sendError(res, 503, "NOT_READY", "database is not ready");
+        }
+        return;
+      }
+
       // Static frontend.
       if (req.method === "GET" && (path === "/" || !path.startsWith("/api/"))) {
         const file = path === "/" ? "index.html" : path.slice(1);
         const resolved = resolve(join(publicDir, file));
-        if (!resolved.startsWith(publicDir)) {
+        if (!isPathWithinDir(publicDir, resolved)) {
           sendError(res, 404, "NOT_FOUND", "not found");
           return;
         }
         try {
           const body = await readFile(resolved);
-          res.writeHead(200, { "content-type": CONTENT_TYPES[extname(resolved)] ?? "application/octet-stream" });
+          res.writeHead(200, {
+            "content-type": CONTENT_TYPES[extname(resolved)] ?? "application/octet-stream",
+            ...SECURITY_HEADERS,
+          });
           res.end(body);
         } catch {
           sendError(res, 404, "NOT_FOUND", "not found");
@@ -102,7 +150,7 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
         try {
           body = await readJson(req);
         } catch (error) {
-          sendReadError(res, error);
+          sendReadError(req, res, error);
           return;
         }
         if (!isRecord(body)) {
@@ -117,7 +165,12 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
           });
           sendJson(res, 201, { data: row });
         } catch (error) {
-          sendError(res, 422, "VALIDATION_ERROR", (error as Error).message);
+          if (error instanceof ValidationError) {
+            sendError(res, 422, "VALIDATION_ERROR", error.message);
+          } else {
+            console.error(error);
+            sendError(res, 500, "INTERNAL_ERROR", "internal error");
+          }
         }
         return;
       }
@@ -128,7 +181,7 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
         try {
           body = await readJson(req);
         } catch (error) {
-          sendReadError(res, error);
+          sendReadError(req, res, error);
           return;
         }
         if (!isRecord(body)) {
@@ -139,7 +192,12 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
           setBudget(db, body["week"] as string, body["amount"] as number);
           sendJson(res, 201, { data: { week: body["week"], amount: body["amount"] } });
         } catch (error) {
-          sendError(res, 422, "VALIDATION_ERROR", (error as Error).message);
+          if (error instanceof ValidationError) {
+            sendError(res, 422, "VALIDATION_ERROR", error.message);
+          } else {
+            console.error(error);
+            sendError(res, 500, "INTERNAL_ERROR", "internal error");
+          }
         }
         return;
       }
@@ -191,7 +249,8 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
 
       sendError(res, 404, "NOT_FOUND", "not found");
     } catch (error) {
-      sendError(res, 500, "INTERNAL_ERROR", (error as Error).message);
+      console.error(error);
+      sendError(res, 500, "INTERNAL_ERROR", "internal error");
     }
   });
 }
@@ -201,7 +260,7 @@ const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileUR
 if (isMain) {
   const port = Number(process.env["PORT"] ?? "3000");
   const dbPath = process.env["DB_PATH"] ?? "data/weekly-budget.db";
-  mkdirSync("data", { recursive: true });
+  ensureDbDir(dbPath);
   const db = openDb(dbPath);
   const publicDir = process.env["PUBLIC_DIR"] ?? join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "public");
   const server = createServer(db, { publicDir });

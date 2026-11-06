@@ -1,8 +1,12 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
-import { openDb } from "../src/db.js";
-import { createServer } from "../src/server.js";
+import { connect } from "node:net";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openDb, type Db } from "../src/db.js";
+import { createServer, ensureDbDir, isPathWithinDir } from "../src/server.js";
 
 let server: Server;
 let base: string;
@@ -32,6 +36,21 @@ async function post(path: string, body: unknown, raw?: string) {
     headers: { "content-type": "application/json" },
     body: raw ?? JSON.stringify(body),
   });
+}
+
+// A second server on its own port, for tests that need a database in a
+// particular state (for example closed) instead of the fresh one above.
+async function startTestServer(db: Db): Promise<{ base: string; close: () => Promise<void> }> {
+  const srv = createServer(db, { publicDir: new URL("../../public/", import.meta.url).pathname });
+  await new Promise<void>((resolve) => {
+    srv.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = srv.address();
+  if (typeof address !== "object" || address === null) throw new Error("no address");
+  return {
+    base: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolve) => srv.close(() => resolve())),
+  };
 }
 
 // The canonical week used by the tests below: 20 food + 30 food + 30
@@ -179,5 +198,127 @@ describe("server", () => {
     assert.equal(res.status, 200);
     const html = await res.text();
     assert.match(html, /weekly-budget/);
+  });
+
+  it("rejects an infinite amount with 422 (JSON 1e999 parses to Infinity)", async () => {
+    // JSON.stringify(Infinity) is `null`, so the raw body is required:
+    // `1e999` is valid JSON that parses to Infinity.
+    const res = await post("/api/v1/spending", undefined, `{"amount":1e999,"category":"food","week":"2026-W45"}`);
+    assert.equal(res.status, 422);
+    const json = await res.json() as { error: { code: string } };
+    assert.equal(json.error.code, "VALIDATION_ERROR");
+  });
+
+  it("rejects an infinite budget with 422", async () => {
+    const res = await post("/api/v1/budgets", undefined, `{"week":"2026-W45","amount":1e999}`);
+    assert.equal(res.status, 422);
+    const json = await res.json() as { error: { code: string } };
+    assert.equal(json.error.code, "VALIDATION_ERROR");
+  });
+
+  it("returns a generic 500 without internal details when the database fails", async () => {
+    const db = openDb(":memory:");
+    const second = await startTestServer(db);
+    try {
+      db.close();
+      const res = await fetch(`${second.base}/api/v1/weeks`);
+      assert.equal(res.status, 500);
+      const json = await res.json() as { error: { code: string; message: string } };
+      assert.equal(json.error.code, "INTERNAL_ERROR");
+      assert.equal(json.error.message, "internal error");
+    } finally {
+      await second.close();
+    }
+  });
+
+  it("keeps the 422 message to the validation message itself", async () => {
+    const res = await post("/api/v1/spending", { amount: 0, category: "food", week: "2026-W45" });
+    assert.equal(res.status, 422);
+    const json = await res.json() as { error: { code: string; message: string } };
+    assert.equal(json.error.code, "VALIDATION_ERROR");
+    assert.equal(json.error.message, "amount must be greater than 0");
+  });
+
+  it("sends security headers on the frontend page and on API responses", async () => {
+    for (const path of ["/", "/api/v1/weeks"]) {
+      const res = await fetch(`${base}${path}`);
+      assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(res.headers.get("x-frame-options"), "DENY");
+      assert.equal(res.headers.get("referrer-policy"), "no-referrer");
+      assert.match(res.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+    }
+  });
+
+  it("answers liveness without touching the database", async () => {
+    const res = await fetch(`${base}/livez`);
+    assert.equal(res.status, 200);
+    const json = await res.json() as { data: { status: string } };
+    assert.deepEqual(json.data, { status: "alive" });
+  });
+
+  it("answers readiness with the database check", async () => {
+    const res = await fetch(`${base}/readyz`);
+    assert.equal(res.status, 200);
+    const json = await res.json() as { data: { status: string; checks: { db: boolean } } };
+    assert.deepEqual(json.data, { status: "ready", checks: { db: true } });
+  });
+
+  it("answers readiness with 503 when the database is down", async () => {
+    const db = openDb(":memory:");
+    const second = await startTestServer(db);
+    try {
+      db.close();
+      const res = await fetch(`${second.base}/readyz`);
+      assert.equal(res.status, 503);
+      const json = await res.json() as { error: { code: string } };
+      assert.equal(json.error.code, "NOT_READY");
+    } finally {
+      await second.close();
+    }
+  });
+
+  it("closes the connection after rejecting an oversized body", async () => {
+    // No `Connection: close` header: with keep-alive the socket must be
+    // closed by the server itself (req.destroy), not by the client.
+    const port = Number(new URL(base).port);
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(
+          "POST /api/v1/spending HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n" +
+            `Content-Length: ${1_048_577}\r\n\r\n` +
+            "x".repeat(1_048_577),
+        );
+      });
+      // Drain the 413 response: a paused socket defers 'end'/'close'
+      // until its buffered data is consumed, so without this the close
+      // below would never be observed even though the server closed it.
+      socket.on("data", () => {});
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => reject(new Error("socket was not closed after the 413")), 2000).unref();
+    });
+  });
+});
+
+describe("path confinement", () => {
+  it("rejects a sibling directory that shares the prefix", () => {
+    // The old check was a bare startsWith: "/app/public-evil/x" starts
+    // with "/app/public" and passed it. The helper must not.
+    assert.equal(isPathWithinDir("/app/public", "/app/public-evil/x"), false);
+    assert.equal(isPathWithinDir("/app/public", "/app/public"), true);
+    assert.equal(isPathWithinDir("/app/public", "/app/public/index.html"), true);
+  });
+});
+
+describe("ensureDbDir", () => {
+  it("creates the database parent directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wb-db-"));
+    try {
+      const dbPath = join(dir, "sub", "weekly-budget.db");
+      ensureDbDir(dbPath);
+      assert.equal(existsSync(join(dir, "sub")), true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

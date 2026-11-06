@@ -33,14 +33,31 @@ with categories:
 
 | Method | Route | Success | Error |
 | ------ | ----- | ------- | ----- |
-| `POST` | `/spending` `{amount, category, week}` | `201 {data: {id, amount, category, week, spent_at}}` | `422 {error: {code: "VALIDATION_ERROR", message}}` when amount is not a positive number, category is empty, or week is not an ISO week |
-| `POST` | `/budgets` `{week, amount}` | `201 {data: {week, amount}}` | `422` when amount is not a positive number or week is not an ISO week |
+| `POST` | `/spending` `{amount, category, week}` | `201 {data: {id, amount, category, week, spent_at}}` | `422 {error: {code: "VALIDATION_ERROR", message}}` when amount is not a finite positive number, category is empty, or week is not an ISO week |
+| `POST` | `/budgets` `{week, amount}` | `201 {data: {week, amount}}` | `422` when amount is not a finite positive number or week is not an ISO week |
 | `GET` | `/weekly-summary?week=YYYY-Www&budget=100&category=` | `200 {data: {total, remaining, warned, percent}}` | `422` when budget is missing or `<= 0`, or week is not an ISO week |
 | `GET` | `/spending?week=YYYY-Www` | `200 {data: [...], pagination: {page, pageSize, totalItems, totalPages}}` | `422` when week is not an ISO week |
 | `GET` | `/weeks` | `200 {data: [{week, total, budget}]}` — one entry per week with spending, newest first | — |
 
 Unknown routes return `404 {error: {code: "NOT_FOUND", message}}`.
 Malformed JSON returns `400 {error: {code: "BAD_JSON", message}}`.
+
+## Health (`/livez`, `/readyz`)
+
+- `GET /livez` → `200 {data: {status: "alive"}}`. Liveness only: it
+  never touches the database.
+- `GET /readyz` → `200 {data: {status: "ready", checks: {db: true}}}`,
+  or `503 {error: {code: "NOT_READY", message}}` when the database
+  does not answer.
+
+## Responses
+
+- Every response carries `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and
+  `Content-Security-Policy: default-src 'self'`.
+- A 500 is always `{error: {code: "INTERNAL_ERROR", message: "internal
+  error"}}`. The real error is logged server-side and never sent to
+  the client.
 
 ## Frontend (`/`)
 

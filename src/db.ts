@@ -19,6 +19,11 @@ export interface WeekRow {
 
 export type Db = DatabaseSync;
 
+// A validation failure: bad input, never an internal error. The server
+// answers these with 422 and the message itself; anything else is a 500
+// with a generic message, so no internal error text ever reaches a client.
+export class ValidationError extends Error {}
+
 export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL");
@@ -42,14 +47,14 @@ export function addSpending(
   db: Db,
   input: { amount: number; category: string; week: string },
 ): SpendingRow {
-  if (typeof input.amount !== "number" || input.amount <= 0) {
-    throw new Error("amount must be greater than 0");
+  if (typeof input.amount !== "number" || !Number.isFinite(input.amount) || input.amount <= 0) {
+    throw new ValidationError("amount must be greater than 0");
   }
   if (typeof input.category !== "string" || input.category.trim() === "") {
-    throw new Error("category must not be empty");
+    throw new ValidationError("category must not be empty");
   }
   if (!isValidWeek(input.week)) {
-    throw new Error("week must be an ISO week (YYYY-Www)");
+    throw new ValidationError("week must be an ISO week (YYYY-Www)");
   }
   const spentAt = new Date().toISOString();
   const result = db
@@ -74,10 +79,10 @@ export function listSpending(db: Db, week: string): SpendingRow[] {
 
 export function setBudget(db: Db, week: string, amount: number): void {
   if (!isValidWeek(week)) {
-    throw new Error("week must be an ISO week (YYYY-Www)");
+    throw new ValidationError("week must be an ISO week (YYYY-Www)");
   }
-  if (typeof amount !== "number" || amount <= 0) {
-    throw new Error("budget must be greater than 0");
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+    throw new ValidationError("budget must be greater than 0");
   }
   db.prepare(
     "INSERT INTO budgets (week, amount) VALUES (?, ?) ON CONFLICT(week) DO UPDATE SET amount = excluded.amount",
