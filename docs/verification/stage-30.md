@@ -110,16 +110,40 @@ hand before the re-run):** page 2 of spending (offset), `?budget=0`
 a week with trailing/leading characters → invalid. Tests are now
 **40/40 pass** (was 35/35).
 
-**Re-run:** a second full run started 2026-11-06 04:22 on the code
-with the new tests (log `/tmp/wb-mutation3.log`, report
-`reports/mutation/mutation.json`). Its score replaces 66.02 here when
-it finishes; the stage is not closed until it is recorded.
+**Re-run (finished 2026-11-06 05:13, 49 min 39 s): score 71.31, up from
+66.02.** 417 mutants: 229 killed (+17), 27 timeout (+2), 103 survived
+(−19), 58 compile errors. Per file: `budget.ts` 100.00, `summary.ts`
+100.00, `week.ts` 96.55 (28 killed, 1 survived — the regex mutants are
+now killed), `db.ts` 80.43 (unchanged — the 9 survivors are the
+Stryker-quirk mutants below), `server.ts` 63.95 (138 killed, 93
+survived, up from 57.36). The 5 new tests killed their target mutants
+(each verified by hand before the re-run); the re-run confirms it.
+
+What remains (103 survivors): 47 `StringLiteral` (error-message and
+response strings the tests do not assert on), 26 `ConditionalExpression`,
+9 `BlockStatement`, 7 `LogicalOperator`, 6 `ObjectLiteral`, 3
+`MethodExpression`, 2 `BooleanLiteral`, 2 `CallExpression`, 1
+`EqualityOperator`. The one `EqualityOperator` survivor is the
+`isMain` entry-point guard (`server.ts` line 200) — it is only
+exercised by running the file as a script, not by the test suite.
+The one `week.ts` survivor (the W53 condition forced to `true`) is
+another instance of the Stryker reporting quirk: reproducing it by
+hand fails the covering test, yet Stryker reports Survived.
+
+Stage 30 is closed on this evidence: the domain is at 100%, the
+HTTP layer improved from 57.36 to 63.95, the remaining survivors are
+named (mostly unasserted message strings and the untestable entry
+guard), and the Stryker quirk is recorded so the score is read as a
+lower bound, not the true score. Further gains would come from
+asserting error-message bodies and covering more error paths — that
+is Stage 40/50 work, not a Stage 30 blocker.
 
 ## Known limits of this verification
 
-- The mutation re-run (second full run, started 04:22) is the last open
-  item; the stage is not closed until its score replaces 66.02 above.
 - The E2E and visual scripts live in /tmp and are not committed; the
   report records their method and results, not the scripts themselves.
+  (Note: /tmp was wiped by a VM restart during this run, which removed
+  the /tmp E2E/visual scripts and the first re-run's log; the re-run
+  was restarted with its log in the workspace.)
 - `npm audit` was not run (its endpoint is blocked in this VM);
   dependency auditing belongs to Stage 40.
