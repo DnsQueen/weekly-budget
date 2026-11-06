@@ -34,7 +34,23 @@ describe("isValidWeek", () => {
     assert.equal(isValidWeek("2026-W54"), false);
   });
 
+  it("rejects a week with trailing or leading characters", () => {
+    // The pattern is anchored (^...$): extra characters must not pass.
+    assert.equal(isValidWeek("2026-W45x"), false);
+    assert.equal(isValidWeek("x2026-W45"), false);
+    assert.equal(isValidWeek("2026-W45 "), false);
+    assert.equal(isValidWeek("2026-W45\n"), false);
+  });
+
   it("rejects a non-string", () => {
     assert.equal(isValidWeek(45 as unknown as string), false);
+  });
+
+  it("rejects week 53 in a year that has only 52 ISO weeks", () => {
+    assert.equal(isValidWeek("2025-W53"), false);
+  });
+
+  it("accepts week 53 in a year that has 53 ISO weeks", () => {
+    assert.equal(isValidWeek("2020-W53"), true);
   });
 });

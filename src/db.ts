@@ -19,7 +19,7 @@ export interface WeekRow {
 
 export type Db = DatabaseSync;
 
-export function openDb(path: string): DatabaseSync {
+export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(`
@@ -39,7 +39,7 @@ export function openDb(path: string): DatabaseSync {
 }
 
 export function addSpending(
-  db: DatabaseSync,
+  db: Db,
   input: { amount: number; category: string; week: string },
 ): SpendingRow {
   if (typeof input.amount !== "number" || input.amount <= 0) {
@@ -66,13 +66,13 @@ export function addSpending(
   };
 }
 
-export function listSpending(db: DatabaseSync, week: string): SpendingRow[] {
+export function listSpending(db: Db, week: string): SpendingRow[] {
   return db
     .prepare("SELECT id, amount, category, week, spent_at FROM spending WHERE week = ? ORDER BY id ASC")
     .all(week) as unknown as SpendingRow[];
 }
 
-export function setBudget(db: DatabaseSync, week: string, amount: number): void {
+export function setBudget(db: Db, week: string, amount: number): void {
   if (!isValidWeek(week)) {
     throw new Error("week must be an ISO week (YYYY-Www)");
   }
@@ -84,14 +84,14 @@ export function setBudget(db: DatabaseSync, week: string, amount: number): void 
   ).run(week, amount);
 }
 
-export function getBudget(db: DatabaseSync, week: string): number | null {
+export function getBudget(db: Db, week: string): number | null {
   const row = db
     .prepare("SELECT amount FROM budgets WHERE week = ?")
     .get(week) as unknown as { amount: number } | undefined;
   return row ? row.amount : null;
 }
 
-export function listWeeks(db: DatabaseSync): WeekRow[] {
+export function listWeeks(db: Db): WeekRow[] {
   const rows = db
     .prepare("SELECT week, SUM(amount) AS total FROM spending GROUP BY week ORDER BY week DESC")
     .all() as unknown as { week: string; total: number }[];

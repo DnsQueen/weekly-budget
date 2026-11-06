@@ -17,7 +17,14 @@ export function isoWeek(date: Date): string {
 }
 
 export function isValidWeek(value: unknown): value is string {
-  return (
-    typeof value === "string" && /^\d{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$/.test(value)
-  );
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-W(0[1-9]|[1-4][0-9]|5[0-3])$/.exec(value);
+  if (match === null) return false;
+  // Week 53 exists only in years with 53 ISO weeks. Dec 28 is always in
+  // the last ISO week of its year, so it tells us whether W53 exists.
+  if (match[2] === "53") {
+    const year = Number(match[1]);
+    return isoWeek(new Date(Date.UTC(year, 11, 28))) === `${year}-W53`;
+  }
+  return true;
 }

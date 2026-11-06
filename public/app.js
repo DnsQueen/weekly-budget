@@ -49,6 +49,20 @@ async function loadStrings() {
   }
 }
 
+// The stored budget for the current week, if one was saved. The input
+// defaults to 100; a stored budget replaces it before refresh() reads it,
+// so a reload shows the summary for the budget that was actually saved.
+async function loadBudget() {
+  const week = document.getElementById("week").value;
+  const res = await fetch("/api/v1/weeks");
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error?.message ?? res.status);
+  const row = json.data.find((r) => r.week === week);
+  if (row && row.budget !== null) {
+    document.querySelector("#budget-form input[name=amount]").value = String(row.budget);
+  }
+}
+
 async function refresh() {
   const week = document.getElementById("week").value;
   const budgetInput = document.querySelector("#budget-form input[name=amount]");
@@ -65,7 +79,7 @@ async function refresh() {
     document.getElementById("summary-warned").textContent = s.warned ? t("warnedYes") : t("warnedNo");
     document.getElementById("summary-percent").textContent = `${s.percent}%`;
 
-    const listRes = await fetch(`/api/v1/spending?week=${encodeURIComponent(week)}`);
+    const listRes = await fetch(`/api/v1/spending?week=${encodeURIComponent(week)}&pageSize=100`);
     const listJson = await listRes.json();
     const list = document.getElementById("spending-list");
     list.innerHTML = "";
@@ -75,6 +89,11 @@ async function refresh() {
       li.textContent = `${row.category}: ${row.amount}`;
       list.appendChild(li);
     }
+    // The API caps pageSize at 100; say how many of the week's entries
+    // are shown, so a truncated list is never silent.
+    document.getElementById("spending-count").textContent = t("showing")
+      .replace("{shown}", String(listJson.data.length))
+      .replace("{total}", String(listJson.pagination.totalItems));
 
     const weeksRes = await fetch("/api/v1/weeks");
     const weeksJson = await weeksRes.json();
@@ -101,41 +120,51 @@ document.getElementById("week").value = isoWeek(new Date());
 document.getElementById("spending-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
-  const res = await fetch("/api/v1/spending", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      amount: Number(form.amount.value),
-      category: form.category.value,
-      week: form.week.value,
-    }),
-  });
-  const json = await res.json();
-  if (!res.ok) {
-    showError(json.error?.message ?? res.status);
-    return;
+  try {
+    const res = await fetch("/api/v1/spending", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        amount: Number(form.amount.value),
+        category: form.category.value,
+        week: form.week.value,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      showError(json.error?.message ?? res.status);
+      return;
+    }
+    form.amount.value = "";
+    form.category.value = "";
+    await refresh();
+  } catch (error) {
+    showError(error.message);
   }
-  form.amount.value = "";
-  form.category.value = "";
-  await refresh();
 });
 
 document.getElementById("budget-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   const week = document.getElementById("week").value;
-  const res = await fetch("/api/v1/budgets", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ week, amount: Number(form.amount.value) }),
-  });
-  const json = await res.json();
-  if (!res.ok) {
-    showError(json.error?.message ?? res.status);
-    return;
+  try {
+    const res = await fetch("/api/v1/budgets", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ week, amount: Number(form.amount.value) }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      showError(json.error?.message ?? res.status);
+      return;
+    }
+    await refresh();
+  } catch (error) {
+    showError(error.message);
   }
-  await refresh();
 });
 
 document.querySelector("#budget-form input[name=amount]").value = "100";
-loadStrings().then(refresh);
+// A failed locale or budget fetch must not leave the page inert: the
+// rejection reaches showError instead of dying unhandled.
+loadStrings().then(loadBudget).then(refresh).catch((error) => showError(error.message));

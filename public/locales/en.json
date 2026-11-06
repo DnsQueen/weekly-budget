@@ -1,1 +1,33 @@
-{"add":"Add","addSpending":"Add spending","amount":"Amount","budget":"Weekly budget","categories":{"food":"Food","fun":"Fun","health":"Health","housing":"Housing","other":"Other","transport":"Transport"},"category":"Category","error":"Error","heading":"Weekly budget","history":"Week history","noHistory":"No weeks recorded yet.","noSpending":"No spending recorded yet.","percent":"Percent","remaining":"Remaining","saveBudget":"Save budget","saved":"Saved.","spending":"This week's spending","summary":"Weekly summary","title":"Weekly budget","total":"Total","warned":"Warning","warnedNo":"No","warnedYes":"Yes — you reached 80% of the budget","week":"Week"}
+{
+  "add": "Add",
+  "addSpending": "Add spending",
+  "amount": "Amount",
+  "budget": "Weekly budget",
+  "categories": {
+    "food": "Food",
+    "fun": "Fun",
+    "health": "Health",
+    "housing": "Housing",
+    "other": "Other",
+    "transport": "Transport"
+  },
+  "category": "Category",
+  "error": "Error",
+  "heading": "Weekly budget",
+  "history": "Week history",
+  "noHistory": "No weeks recorded yet.",
+  "noSpending": "No spending recorded yet.",
+  "percent": "Percent",
+  "remaining": "Remaining",
+  "saveBudget": "Save budget",
+  "saved": "Saved.",
+  "spending": "This week's spending",
+  "summary": "Weekly summary",
+  "title": "Weekly budget",
+  "total": "Total",
+  "warned": "Warning",
+  "warnedNo": "No",
+  "warnedYes": "Yes — you reached 80% of the budget",
+  "week": "Week",
+  "showing": "Showing {shown} of {total} entries"
+}

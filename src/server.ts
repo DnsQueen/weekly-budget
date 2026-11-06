@@ -25,11 +25,37 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
   sendJson(res, status, { error: { code, message } });
 }
 
+// Maps a readJson failure to its response: an oversized body is 413,
+// anything else that is not JSON is 400.
+function sendReadError(res: ServerResponse, error: unknown): void {
+  if ((error as Error).message === "BODY_TOO_LARGE") {
+    sendError(res, 413, "BODY_TOO_LARGE", "request body exceeds 1 MB");
+  } else {
+    sendError(res, 400, "BAD_JSON", "request body is not valid JSON");
+  }
+}
+
+// Max request body: 1 MB. A client must not be able to make the server
+// buffer an unbounded body in memory before parsing it.
+const MAX_BODY_BYTES = 1_048_576;
+
 function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolvePromise, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let size = 0;
+    let tooLarge = false;
+    req.on("data", (chunk: Buffer) => {
+      if (tooLarge) return;
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
+        reject(new Error("BODY_TOO_LARGE"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
+      if (tooLarge) return;
       try {
         resolvePromise(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
       } catch {
@@ -75,8 +101,8 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
         let body: unknown;
         try {
           body = await readJson(req);
-        } catch {
-          sendError(res, 400, "BAD_JSON", "request body is not valid JSON");
+        } catch (error) {
+          sendReadError(res, error);
           return;
         }
         if (!isRecord(body)) {
@@ -101,8 +127,8 @@ export function createServer(db: Db, opts: { publicDir: string }): Server {
         let body: unknown;
         try {
           body = await readJson(req);
-        } catch {
-          sendError(res, 400, "BAD_JSON", "request body is not valid JSON");
+        } catch (error) {
+          sendReadError(res, error);
           return;
         }
         if (!isRecord(body)) {
@@ -177,7 +203,7 @@ if (isMain) {
   const dbPath = process.env["DB_PATH"] ?? "data/weekly-budget.db";
   mkdirSync("data", { recursive: true });
   const db = openDb(dbPath);
-  const publicDir = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "public");
+  const publicDir = process.env["PUBLIC_DIR"] ?? join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "public");
   const server = createServer(db, { publicDir });
   server.listen(port, () => {
     console.log(`weekly-budget listening on http://localhost:${port}`);
